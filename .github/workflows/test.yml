@@ -1,0 +1,79 @@
+name: CI Pipeline
+
+on: [push, pull_request]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: [stable, oldstable]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        if: hashFiles('go.mod') != ''
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: ${{ hashFiles('go.mod') != '' && 'true' || 'false' }}
+
+      - name: Cache Go modules
+        if: hashFiles('go.mod') != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+      - name: Install dependencies
+        if: hashFiles('go.mod') != ''
+        run: go mod download
+
+      - name: Lint and format check
+        if: hashFiles('go.mod') != ''
+        run: |
+          gofmt -l .
+          test -z "$(gofmt -l .)"
+          go vet ./...
+
+      - name: Build
+        if: hashFiles('go.mod') != ''
+        run: go build ./...
+
+      - name: Run tests
+        if: hashFiles('go.mod') != ''
+        run: go test ./... -race -coverprofile=coverage.out
+
+      - name: No Go module detected
+        if: hashFiles('go.mod') == ''
+        run: echo "::notice::No go.mod found, skipping Go steps"
+
+      - name: Pipeline summary
+        if: always()
+        run: |
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          | Step | Outcome |
+          |------|---------|
+          | Checkout | ${{ steps.checkout.outcome }} |
+          | Set up Go | ${{ steps.setup-go.outcome }} |
+          | Cache Go modules | ${{ steps.cache-go-modules.outcome }} |
+          | Install dependencies | ${{ steps.install-dependencies.outcome }} |
+          | Lint and format check | ${{ steps.lint-and-format-check.outcome }} |
+          | Build | ${{ steps.build.outcome }} |
+          | Run tests | ${{ steps.run-tests.outcome }} |
+          | No Go module detected | ${{ steps.no-go-module-detected.outcome }} |
+          EOF
